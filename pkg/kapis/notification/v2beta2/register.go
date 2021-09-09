@@ -19,26 +19,28 @@
 package v2beta2
 
 import (
+	nm "kubesphere.io/kubesphere/pkg/simple/client/notification"
 	"net/http"
 
 	"github.com/emicklei/go-restful"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	"kubesphere.io/kubesphere/pkg/api"
 	"kubesphere.io/kubesphere/pkg/apiserver/runtime"
 )
 
 var GroupVersion = schema.GroupVersion{Group: "notification.kubesphere.io", Version: "v2beta2"}
 
-func AddToContainer(container *restful.Container) error {
-	h := newHandler()
+func AddToContainer(container *restful.Container,option *nm.Options) error {
+
+	h := newHandler(option)
+
 	ws := runtime.NewWebService(GroupVersion)
 	ws.Route(ws.POST("/verify").
 		Reads("").
 		To(h.Verify).
 		Returns(http.StatusOK, api.StatusOK, http.Response{}.Body)).
 		Doc("Provide validation for notification-manager information")
-	ws.Route(ws.POST("/verify/{user}").
+	ws.Route(ws.POST("/users/{user}/verify").
 		To(h.Verify).
 		Param(ws.PathParameter("user", "user name")).
 		Returns(http.StatusOK, api.StatusOK, http.Response{}.Body)).

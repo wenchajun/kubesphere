@@ -1,74 +1,95 @@
 package v2beta2
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 
-	"kubesphere.io/api/notification/v2beta2"
-
 	"github.com/emicklei/go-restful"
+	"kubesphere.io/api/notification/v2beta2"
+	nm "kubesphere.io/kubesphere/pkg/simple/client/notification"
 )
 
 const (
-	VerifyUrl = "http://notification-manager-svc.kubesphere-monitoring-system.svc:19093/api/v2/verify"
+	VerifyAPI = "/api/v2/verify"
 )
 
-type handler struct{}
+type handler struct {
+	option *nm.Options
+}
 
 type Result struct {
 	Code    int    `json:"Status"`
 	Message string `json:"Message"`
 }
+type notification struct {
+	Config   v2beta2.Config   `json:"config"`
+	Receiver v2beta2.Receiver `json:"receiver"`
+}
 
-func newHandler() handler {
-	return handler{}
+func newHandler(option *nm.Options) *handler {
+	return &handler{
+		option,
+	}
 }
 
 func (h handler) Verify(request *restful.Request, response *restful.Response) {
-
-	config := v2beta2.Config{}
+	option := nm.NewNotificationOptions()
+	h.option.ApplyTo(option)
+	host := option.Endpoint
+	//option.Endpoint=
+	//option.Endpoint = "http://notification-manager-svc.kubesphere-monitoring-system.svc:19093"
+	log.Println(fmt.Sprintf("%s%s", host, VerifyAPI))
+	log.Println(h.option.Endpoint)
+	log.Println("11111")
+	log.Println("---------------")
+	//option.ApplyTo(option)
+	log.Println(option.Endpoint)
+	notification := notification{}
 	reqBody, err := ioutil.ReadAll(request.Request.Body)
 	if err != nil {
 		response.WriteHeaderAndEntity(http.StatusInternalServerError, err)
 		return
 	}
 
-	err = json.Unmarshal([]byte(reqBody), &config)
+	err = json.Unmarshal(reqBody, &notification)
 	if err != nil {
 		response.WriteHeaderAndEntity(http.StatusInternalServerError, err)
 		return
 	}
 
+	receiver := notification.Receiver
 	user := request.PathParameter("user")
-	if config.Labels["type"] == "tenant" {
-		if user != config.Labels["user"] {
+
+	if receiver.Labels["type"] == "tenant" {
+		if user != receiver.Labels["user"] {
 			response.WriteAsJson(Result{
-				403,
-				" No enough permissions",
+				http.StatusForbidden,
+				"No enough permissions",
+			})
+			return
+		}
+	}
+	if receiver.Labels["type"] == "global" {
+		if user != "" {
+			response.WriteAsJson(Result{
+				http.StatusForbidden,
+				"No enough permissions",
 			})
 			return
 		}
 	}
 
-	if user != config.Labels["user"] {
-		if config.Labels["type"] != "default" && config.Labels["type"] != "global" {
-			response.WriteAsJson(Result{
-				403,
-				" No enough permissions",
-			})
-			return
-		}
-	}
-
-	req, err := http.NewRequest("POST", VerifyUrl, request.Request.Body)
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s%s", host, VerifyAPI), bytes.NewReader(reqBody))
 	if err != nil {
 		response.WriteHeaderAndEntity(http.StatusInternalServerError, err)
 		return
 	}
-
-	req.Header.Set("Content-Type", "application/json")
+	req.Header = request.Request.Header
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
