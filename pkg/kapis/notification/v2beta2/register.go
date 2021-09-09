@@ -33,7 +33,15 @@ var GroupVersion = schema.GroupVersion{Group: "notification.kubesphere.io", Vers
 func AddToContainer(container *restful.Container) error {
 	h := newHandler()
 	ws := runtime.NewWebService(GroupVersion)
-	ws.Route(ws.POST("/verify").Reads("").To(h.Verify).Returns(http.StatusOK, api.StatusOK, http.Response{}.Body)).
+	ws.Route(ws.POST("/verify").
+		Reads("").
+		To(h.Verify).
+		Returns(http.StatusOK, api.StatusOK, http.Response{}.Body)).
+		Doc("Provide validation for notification-manager information")
+	ws.Route(ws.POST("/verify/{user}").
+		To(h.Verify).
+		Param(ws.PathParameter("user", "user name")).
+		Returns(http.StatusOK, api.StatusOK, http.Response{}.Body)).
 		Doc("Provide validation for notification-manager information")
 	container.Add(ws)
 	return nil
