@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 
 	"github.com/emicklei/go-restful"
@@ -41,14 +40,6 @@ func (h handler) Verify(request *restful.Request, response *restful.Response) {
 	option := nm.NewNotificationOptions()
 	h.option.ApplyTo(option)
 	host := option.Endpoint
-	//option.Endpoint=
-	//option.Endpoint = "http://notification-manager-svc.kubesphere-monitoring-system.svc:19093"
-	log.Println(fmt.Sprintf("%s%s", host, VerifyAPI))
-	log.Println(h.option.Endpoint)
-	log.Println("11111")
-	log.Println("---------------")
-	//option.ApplyTo(option)
-	log.Println(option.Endpoint)
 	notification := notification{}
 	reqBody, err := ioutil.ReadAll(request.Request.Body)
 	if err != nil {
@@ -107,7 +98,7 @@ func (h handler) Verify(request *restful.Request, response *restful.Response) {
 	}
 
 	var result Result
-	err = json.Unmarshal([]byte(body), &result)
+	err = json.Unmarshal(body, &result)
 	if err != nil {
 		response.WriteHeaderAndEntity(http.StatusInternalServerError, err)
 		return
