@@ -37,9 +37,14 @@ func newHandler(option *nm.Options) *handler {
 }
 
 func (h handler) Verify(request *restful.Request, response *restful.Response) {
-	option := nm.NewNotificationOptions()
-	h.option.ApplyTo(option)
-	host := option.Endpoint
+	opt := h.option
+	if opt == nil || len(opt.Endpoint) == 0 {
+		response.WriteAsJson(Result{
+			http.StatusBadRequest,
+			"The corresponding Notification Manager path could not be found",
+		})
+	}
+	host := opt.Endpoint
 	notification := notification{}
 	reqBody, err := ioutil.ReadAll(request.Request.Body)
 	if err != nil {
