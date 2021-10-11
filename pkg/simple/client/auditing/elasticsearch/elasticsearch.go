@@ -17,7 +17,13 @@ limitations under the License.
 package elasticsearch
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"log"
+	"strconv"
+
+	"kubesphere.io/kubesphere/pkg/utils/stringutils"
 
 	jsoniter "github.com/json-iterator/go"
 
@@ -27,6 +33,49 @@ import (
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+//From the parseToQueryPart function
+type Source struct {
+	Time                     string `json:"RequestReceivedTimestamp,omitempty"`
+	Workspace                string `json:"Workspace,omitempty"`
+	Verb                     string `json:"Verb,omitempty"`
+	Level                    string `json:"Level,omitempty"`
+	SourceIPs                string `json:"SourceIPs,omitempty"`
+	AuditID                  string `json:"AuditID,omitempty"`
+	Cluster                  string `json:"Cluster,omitempty"`
+	Devops                   string `json:"Devops,omitempty"`
+	Message                  string `json:"Message,omitempty"`
+	RequestObject            string `json:"RequestObject,omitempty"`
+	RequestReceivedTimestamp string `json:"RequestReceivedTimestamp,omitempty"`
+	RequestURI               string `json:"RequestURI,omitempty"`
+	Stage                    string `json:"Stage,omitempty"`
+	StageTimestamp           string `json:"StageTimestamp,omitempty"`
+	User                     `json:"User,omitempty"`
+	ResponseStatus           `json:"ResponseStatus,omitempty"`
+	ObjectRef                `json:"ObjectRef,omitempty"`
+}
+
+type ObjectRef struct {
+	Namespace       string `json:"Namespace,omitempty"`
+	Name            string `json:"Name,omitempty"`
+	Resource        string `json:"Resource,omitempty"`
+	Subresource     string `json:"Subresource,omitempty"`
+	APIVersion      string `json:"APIVersion,omitempty"`
+	APIGroup        string `json:"APIGroup,omitempty"`
+	ResourceVersion string `json:"ResourceVersion,omitempty"`
+	UID             string `json:"UID,omitempty"`
+}
+
+type User struct {
+	Username string `json:"Username,omitempty"`
+	Groups   string `json:"Groups,omitempty"`
+	UID      string `json:"UID,omitempty"`
+}
+
+type ResponseStatus struct {
+	Code     int         `json:"code,omitempty"`
+	Metadata interface{} `json:"metadata,omitempty"`
+}
 
 type client struct {
 	c *es.Client
@@ -103,6 +152,99 @@ func NewClient(options *auditing.Options) (auditing.Client, error) {
 	var err error
 	c.c, err = es.NewClient(options.Host, options.BasicAuth, options.Username, options.Password, options.IndexPrefix, options.Version)
 	return c, err
+}
+
+func (c *client) ExportLogs(sf auditing.Filter, w io.Writer) error {
+
+	var id string
+	var data []string
+
+	b := query.NewBuilder().
+		WithQuery(parseToQueryPart(&sf)).
+		WithSort("RequestReceivedTimestamp", "desc").
+		WithFrom(0).
+		WithSize(1000)
+
+	resp, err := c.c.Search(b, sf.StartTime, sf.EndTime, true)
+	if err != nil {
+		return err
+	}
+
+	defer c.c.ClearScroll(id)
+
+	id = resp.ScrollId
+	for _, hit := range resp.AllHits {
+		data = append(data, c.getSource(hit.Source).Verb)
+		data = append(data, strconv.Itoa(c.getSource(hit.Source).ResponseStatus.Code))
+		data = append(data, c.getSource(hit.Source).Workspace)
+		data = append(data, c.getSource(hit.Source).Namespace)
+		data = append(data, c.getSource(hit.Source).Resource)
+		data = append(data, c.getSource(hit.Source).User.Username)
+	}
+
+	// limit to retrieve max 100 records
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			data, id, err = c.scroll(id)
+			if err != nil {
+				return err
+			}
+		}
+		if len(data) == 0 {
+			return nil
+		}
+
+		count := 0
+		output := new(bytes.Buffer)
+		for _, l := range data {
+			count++
+			if count%6 != 0 {
+				output.WriteString(fmt.Sprintf("%s\t", stringutils.StripAnsi(l)))
+			} else {
+				output.WriteString(fmt.Sprintf("%s\n", stringutils.StripAnsi(l)))
+			}
+		}
+		_, err = io.Copy(w, output)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *client) scroll(id string) ([]string, string, error) {
+	resp, err := c.c.Scroll(id)
+	if err != nil {
+		return nil, id, err
+	}
+
+	var data []string
+	for _, hit := range resp.AllHits {
+		data = append(data, c.getSource(hit.Source).Verb)
+		data = append(data, strconv.Itoa(c.getSource(hit.Source).ResponseStatus.Code))
+		data = append(data, c.getSource(hit.Source).Workspace)
+		data = append(data, c.getSource(hit.Source).Namespace)
+		data = append(data, c.getSource(hit.Source).Resource)
+		data = append(data, c.getSource(hit.Source).User.Username)
+		log.Println("---------")
+	}
+	return data, resp.ScrollId, nil
+}
+
+func (c *client) getSource(val interface{}) Source {
+
+	s := Source{}
+
+	bs, err := json.Marshal(val)
+	if err != nil {
+		return s
+	}
+
+	err = json.Unmarshal(bs, &s)
+	if err != nil {
+		return s
+	}
+	return s
 }
 
 func parseToQueryPart(f *auditing.Filter) *query.Query {
