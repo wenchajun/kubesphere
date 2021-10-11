@@ -17,7 +17,10 @@ limitations under the License.
 package elasticsearch
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"kubesphere.io/kubesphere/pkg/utils/stringutils"
 
 	jsoniter "github.com/json-iterator/go"
 
@@ -103,6 +106,75 @@ func NewClient(options *auditing.Options) (auditing.Client, error) {
 	var err error
 	c.c, err = es.NewClient(options.Host, options.BasicAuth, options.Username, options.Password, options.IndexPrefix, options.Version)
 	return c, err
+}
+
+func (c *client) ExportLogs(sf auditing.Filter, w io.Writer) error {
+
+	var id string
+	var data []string
+
+	b := query.NewBuilder().
+		WithQuery(parseToQueryPart(&sf)).
+		WithSort("RequestReceivedTimestamp", "desc").
+		WithFrom(0).
+		WithSize(1000)
+
+	resp, err := c.c.Search(b, sf.StartTime, sf.EndTime, true)
+	if err != nil {
+		return err
+	}
+
+	defer c.c.ClearScroll(id)
+
+	id = resp.ScrollId
+	for _, hit := range resp.AllHits {
+		data = append(data, c.getSource(hit.Source))
+	}
+
+	// limit to retrieve max 100 records
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			data, id, err = c.scroll(id)
+			if err != nil {
+				return err
+			}
+		}
+		if len(data) == 0 {
+			return nil
+		}
+
+		output := new(bytes.Buffer)
+		for _, l := range data {
+			output.WriteString(fmt.Sprintf("%s\n", stringutils.StripAnsi(l)))
+		}
+		_, err = io.Copy(w, output)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *client) scroll(id string) ([]string, string, error) {
+	resp, err := c.c.Scroll(id)
+	if err != nil {
+		return nil, id, err
+	}
+
+	var data []string
+	for _, hit := range resp.AllHits {
+		data = append(data, c.getSource(hit.Source))
+	}
+	return data, resp.ScrollId, nil
+}
+
+func (c *client) getSource(val interface{}) string {
+	s, err := json.Marshal(val)
+	if err != nil {
+		return string(s)
+	}
+
+	return string(s)
 }
 
 func parseToQueryPart(f *auditing.Filter) *query.Query {

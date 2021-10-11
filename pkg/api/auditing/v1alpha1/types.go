@@ -25,6 +25,10 @@ import (
 	"kubesphere.io/kubesphere/pkg/simple/client/auditing"
 )
 
+const (
+	OperationExport = "export"
+)
+
 type APIResponse struct {
 	Events     *auditing.Events     `json:"query,omitempty" description:"query results"`
 	Statistics *auditing.Statistics `json:"statistics,omitempty" description:"statistics results"`
