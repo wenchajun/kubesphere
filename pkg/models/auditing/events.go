@@ -17,6 +17,7 @@ limitations under the License.
 package auditing
 
 import (
+	"io"
 	"strconv"
 
 	"kubesphere.io/kubesphere/pkg/api/auditing/v1alpha1"
@@ -26,6 +27,7 @@ import (
 
 type Interface interface {
 	Events(queryParam *v1alpha1.Query, MutateFilterFunc func(*auditing.Filter)) (*v1alpha1.APIResponse, error)
+	ExportLogs(sf auditing.Filter, w io.Writer) error
 }
 
 type eventsOperator struct {
@@ -34,6 +36,9 @@ type eventsOperator struct {
 
 func NewEventsOperator(client auditing.Client) Interface {
 	return &eventsOperator{client}
+}
+func (e eventsOperator) ExportLogs(sf auditing.Filter, w io.Writer) error {
+	return e.client.ExportLogs(sf, w)
 }
 
 func (eo *eventsOperator) Events(queryParam *v1alpha1.Query,

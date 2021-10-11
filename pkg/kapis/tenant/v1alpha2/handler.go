@@ -400,16 +400,25 @@ func (h *tenantHandler) Auditing(req *restful.Request, resp *restful.Response) {
 		api.HandleInternalError(resp, req, err)
 		return
 	}
+	if queryParam.Operation == auditingv1alpha1.OperationExport {
+		resp.Header().Set(restful.HEADER_ContentType, "text/plain")
+		resp.Header().Set("Content-Disposition", "attachment")
+		err := h.tenant.ExportAuditingLogs(user, queryParam, resp)
+		if err != nil {
+			klog.Errorln(err)
+			api.HandleInternalError(resp, req, err)
+			return
+		}
+	} else {
+		result, err := h.tenant.Auditing(user, queryParam)
+		if err != nil {
+			klog.Errorln(err)
+			api.HandleInternalError(resp, req, err)
+			return
+		}
 
-	result, err := h.tenant.Auditing(user, queryParam)
-	if err != nil {
-		klog.Errorln(err)
-		api.HandleInternalError(resp, req, err)
-		return
+		_ = resp.WriteEntity(result)
 	}
-
-	_ = resp.WriteEntity(result)
-
 }
 
 func (h *tenantHandler) DescribeNamespace(request *restful.Request, response *restful.Response) {

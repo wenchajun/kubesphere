@@ -17,6 +17,7 @@ limitations under the License.
 package auditing
 
 import (
+	"io"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type Client interface {
 	SearchAuditingEvent(filter *Filter, from, size int64, sort string) (*Events, error)
 	CountOverTime(filter *Filter, interval string) (*Histogram, error)
 	StatisticsOnResources(filter *Filter) (*Statistics, error)
+	ExportLogs(sf Filter, w io.Writer) error
 }
 
 type Filter struct {

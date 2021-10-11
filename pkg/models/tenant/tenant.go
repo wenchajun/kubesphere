@@ -85,6 +85,7 @@ type Interface interface {
 	Events(user user.Info, queryParam *eventsv1alpha1.Query) (*eventsv1alpha1.APIResponse, error)
 	QueryLogs(user user.Info, query *loggingv1alpha2.Query) (*loggingv1alpha2.APIResponse, error)
 	ExportLogs(user user.Info, query *loggingv1alpha2.Query, writer io.Writer) error
+	ExportAuditingLogs(user user.Info, query *auditingv1alpha1.Query, writer io.Writer) error
 	Auditing(user user.Info, queryParam *auditingv1alpha1.Query) (*auditingv1alpha1.APIResponse, error)
 	DescribeNamespace(workspace, namespace string) (*corev1.Namespace, error)
 	DeleteNamespace(workspace, namespace string) error
@@ -893,6 +894,122 @@ func (t *tenantOperator) ExportLogs(user user.Info, query *loggingv1alpha2.Query
 	} else {
 		return t.lo.ExportLogs(sf, writer)
 	}
+}
+
+func (t *tenantOperator) ExportAuditingLogs(user user.Info, queryParam *auditingv1alpha1.Query, writer io.Writer) error {
+	iNamespaces, err := t.listIntersectedNamespaces(
+		stringutils.Split(queryParam.WorkspaceFilter, ","),
+		stringutils.Split(queryParam.WorkspaceSearch, ","),
+		stringutils.Split(queryParam.ObjectRefNamespaceFilter, ","),
+		stringutils.Split(queryParam.ObjectRefNamespaceSearch, ","))
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	iWorkspaces, err := t.listIntersectedWorkspaces(
+		stringutils.Split(queryParam.WorkspaceFilter, ","),
+		stringutils.Split(queryParam.WorkspaceSearch, ","))
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	namespaceCreateTimeMap := make(map[string]time.Time)
+	workspaceCreateTimeMap := make(map[string]time.Time)
+
+	// Now auditing and event have the same authorization mechanism, so we can determine whether the user
+	// has permission to view the auditing log in ns by judging whether the user has the permission to view the event in ns.
+	for _, ns := range iNamespaces {
+		listEvts := authorizer.AttributesRecord{
+			User:            user,
+			Verb:            "list",
+			APIGroup:        "",
+			APIVersion:      "v1",
+			Namespace:       ns.Name,
+			Resource:        "events",
+			ResourceRequest: true,
+			ResourceScope:   request.NamespaceScope,
+		}
+		decision, _, err := t.authorizer.Authorize(listEvts)
+		if err != nil {
+			klog.Error(err)
+			return err
+		}
+		if decision == authorizer.DecisionAllow {
+			namespaceCreateTimeMap[ns.Name] = ns.CreationTimestamp.Time
+		}
+	}
+
+	// Now auditing and event have the same authorization mechanism, so we can determine whether the user
+	// has permission to view the auditing log in ws by judging whether the user has the permission to view the event in ws.
+	for _, ws := range iWorkspaces {
+		listEvts := authorizer.AttributesRecord{
+			User:            user,
+			Verb:            "list",
+			APIGroup:        "",
+			APIVersion:      "v1",
+			Workspace:       ws.Name,
+			Resource:        "events",
+			ResourceRequest: true,
+			ResourceScope:   request.WorkspaceScope,
+		}
+		decision, _, err := t.authorizer.Authorize(listEvts)
+		if err != nil {
+			klog.Error(err)
+			return err
+		}
+		if decision == authorizer.DecisionAllow {
+			workspaceCreateTimeMap[ws.Name] = ws.CreationTimestamp.Time
+		}
+	}
+
+	// If there are no ns and ws query conditions,
+	// those events with empty `objectRef.namespace` will also be listed when user can list all events
+	if len(queryParam.WorkspaceFilter) == 0 && len(queryParam.ObjectRefNamespaceFilter) == 0 &&
+		len(queryParam.WorkspaceSearch) == 0 && len(queryParam.ObjectRefNamespaceSearch) == 0 {
+		listEvts := authorizer.AttributesRecord{
+			User:            user,
+			Verb:            "list",
+			APIGroup:        "",
+			APIVersion:      "v1",
+			Resource:        "events",
+			ResourceRequest: true,
+			ResourceScope:   request.ClusterScope,
+		}
+		decision, _, err := t.authorizer.Authorize(listEvts)
+		if err != nil {
+			klog.Error(err)
+			return err
+		}
+		if decision == authorizer.DecisionAllow {
+			namespaceCreateTimeMap[""] = time.Time{}
+			workspaceCreateTimeMap[""] = time.Time{}
+		}
+	}
+
+	sf := auditingclient.Filter{
+		ObjectRefNamespaces:     stringutils.Split(queryParam.ObjectRefNamespaceFilter, ","),
+		ObjectRefNamespaceFuzzy: stringutils.Split(queryParam.ObjectRefNamespaceSearch, ","),
+		Workspaces:              stringutils.Split(queryParam.WorkspaceFilter, ","),
+		WorkspaceFuzzy:          stringutils.Split(queryParam.WorkspaceSearch, ","),
+		ObjectRefNames:          stringutils.Split(queryParam.ObjectRefNameFilter, ","),
+		ObjectRefNameFuzzy:      stringutils.Split(queryParam.ObjectRefNameSearch, ","),
+		Levels:                  stringutils.Split(queryParam.LevelFilter, ","),
+		Verbs:                   stringutils.Split(queryParam.VerbFilter, ","),
+		Users:                   stringutils.Split(queryParam.UserFilter, ","),
+		UserFuzzy:               stringutils.Split(queryParam.UserSearch, ","),
+		GroupFuzzy:              stringutils.Split(queryParam.GroupSearch, ","),
+		SourceIpFuzzy:           stringutils.Split(queryParam.SourceIpSearch, ","),
+		ObjectRefResources:      stringutils.Split(queryParam.ObjectRefResourceFilter, ","),
+		ObjectRefSubresources:   stringutils.Split(queryParam.ObjectRefSubresourceFilter, ","),
+		ResponseStatus:          stringutils.Split(queryParam.ResponseStatusFilter, ","),
+		StartTime:               queryParam.StartTime,
+		EndTime:                 queryParam.EndTime,
+	}
+
+	return t.auditing.ExportLogs(sf, writer)
+
 }
 
 func (t *tenantOperator) Auditing(user user.Info, queryParam *auditingv1alpha1.Query) (*auditingv1alpha1.APIResponse, error) {
