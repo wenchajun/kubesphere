@@ -21,6 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	opensearchv1alpha2 "kubesphere.io/kubesphere/pkg/api/oslog/v1alpha2"
+	"kubesphere.io/kubesphere/pkg/models/opensearch"
+	opensearchClient "kubesphere.io/kubesphere/pkg/simple/client/oslog"
 	"strings"
 	"time"
 
@@ -90,6 +93,7 @@ type Interface interface {
 	ListWorkspaceClusters(workspace string) (*api.ListResult, error)
 	Events(user user.Info, queryParam *eventsv1alpha1.Query) (*eventsv1alpha1.APIResponse, error)
 	QueryLogs(user user.Info, query *loggingv1alpha2.Query) (*loggingv1alpha2.APIResponse, error)
+	OpensearchLogs(user user.Info, query *opensearchv1alpha2.Query) (*opensearchv1alpha2.APIResponse, error)
 	ExportLogs(user user.Info, query *loggingv1alpha2.Query, writer io.Writer) error
 	Auditing(user user.Info, queryParam *auditingv1alpha1.Query) (*auditingv1alpha1.APIResponse, error)
 	DescribeNamespace(workspace, namespace string) (*corev1.Namespace, error)
@@ -114,12 +118,13 @@ type tenantOperator struct {
 	resourceGetter *resourcesv1alpha3.ResourceGetter
 	events         events.Interface
 	lo             logging.LoggingOperator
+	op             opensearch.OpensearchOperator
 	auditing       auditing.Interface
 	mo             monitoring.MonitoringOperator
 	opRelease      openpitrix.ReleaseInterface
 }
 
-func New(informers informers.InformerFactory, k8sclient kubernetes.Interface, ksclient kubesphere.Interface, evtsClient eventsclient.Client, loggingClient loggingclient.Client, auditingclient auditingclient.Client, am am.AccessManagementInterface, im im.IdentityManagementInterface, authorizer authorizer.Authorizer, monitoringclient monitoringclient.Interface, resourceGetter *resourcev1alpha3.ResourceGetter, opClient openpitrix.Interface) Interface {
+func New(informers informers.InformerFactory, k8sclient kubernetes.Interface, ksclient kubesphere.Interface, evtsClient eventsclient.Client, loggingClient loggingclient.Client, opensearchClient opensearchClient.Client, auditingclient auditingclient.Client, am am.AccessManagementInterface, im im.IdentityManagementInterface, authorizer authorizer.Authorizer, monitoringclient monitoringclient.Interface, resourceGetter *resourcev1alpha3.ResourceGetter, opClient openpitrix.Interface) Interface {
 	return &tenantOperator{
 		am:             am,
 		im:             im,
@@ -129,6 +134,7 @@ func New(informers informers.InformerFactory, k8sclient kubernetes.Interface, ks
 		ksclient:       ksclient,
 		events:         events.NewEventsOperator(evtsClient),
 		lo:             logging.NewLoggingOperator(loggingClient),
+		op:             opensearch.NewOpensearchOperator(opensearchClient),
 		auditing:       auditing.NewEventsOperator(auditingclient),
 		mo:             monitoring.NewMonitoringOperator(monitoringclient, nil, k8sclient, informers, resourceGetter, nil),
 		opRelease:      opClient,
@@ -864,6 +870,110 @@ func (t *tenantOperator) QueryLogs(user user.Info, query *loggingv1alpha2.Query)
 	}
 	return &ar, err
 }
+
+func (t *tenantOperator) OpensearchLogs(user user.Info, query *opensearchv1alpha2.Query) (*opensearchv1alpha2.APIResponse, error) {
+	iNamespaces, err := t.listIntersectedNamespaces(nil, nil,
+		stringutils.Split(query.NamespaceFilter, ","),
+		stringutils.Split(query.NamespaceSearch, ","))
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+
+	namespaceCreateTimeMap := make(map[string]*time.Time)
+
+	var isGlobalAdmin bool
+
+	// If it is a global admin, the user can view logs from any namespace.
+	podLogs := authorizer.AttributesRecord{
+		User:            user,
+		Verb:            "get",
+		APIGroup:        "",
+		APIVersion:      "v1",
+		Resource:        "pods",
+		Subresource:     "log",
+		ResourceRequest: true,
+		ResourceScope:   request.ClusterScope,
+	}
+	decision, _, err := t.authorizer.Authorize(podLogs)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+	if decision == authorizer.DecisionAllow {
+		isGlobalAdmin = true
+		if query.NamespaceFilter != "" || query.NamespaceSearch != "" {
+			for _, ns := range iNamespaces {
+				namespaceCreateTimeMap[ns.Name] = nil
+			}
+		}
+	}
+
+	// If it is a regular user, this user can only view logs of namespaces the user belongs to.
+	if !isGlobalAdmin {
+		for _, ns := range iNamespaces {
+			podLogs := authorizer.AttributesRecord{
+				User:            user,
+				Verb:            "get",
+				APIGroup:        "",
+				APIVersion:      "v1",
+				Namespace:       ns.Name,
+				Resource:        "pods",
+				Subresource:     "log",
+				ResourceRequest: true,
+				ResourceScope:   request.NamespaceScope,
+			}
+			decision, _, err := t.authorizer.Authorize(podLogs)
+			if err != nil {
+				klog.Error(err)
+				return nil, err
+			}
+			if decision == authorizer.DecisionAllow {
+				namespaceCreateTimeMap[ns.Name] = &ns.CreationTimestamp.Time
+			}
+		}
+	}
+
+	sf := opensearchClient.SearchFilter{
+		NamespaceFilter: namespaceCreateTimeMap,
+		WorkloadSearch:  stringutils.Split(query.WorkloadSearch, ","),
+		WorkloadFilter:  stringutils.Split(query.WorkloadFilter, ","),
+		PodSearch:       stringutils.Split(query.PodSearch, ","),
+		PodFilter:       stringutils.Split(query.PodFilter, ","),
+		ContainerSearch: stringutils.Split(query.ContainerSearch, ","),
+		ContainerFilter: stringutils.Split(query.ContainerFilter, ","),
+		LogSearch:       stringutils.Split(query.LogSearch, ","),
+		Starttime:       query.StartTime,
+		Endtime:         query.EndTime,
+	}
+
+	var ar opensearchv1alpha2.APIResponse
+	noHit := !isGlobalAdmin && len(namespaceCreateTimeMap) == 0 ||
+		isGlobalAdmin && len(namespaceCreateTimeMap) == 0 && (query.NamespaceFilter != "" || query.NamespaceSearch != "")
+
+	switch query.Operation {
+	case opensearchv1alpha2.OperationStatistics:
+		if noHit {
+			ar.Statistics = &opensearchClient.Statistics{}
+		} else {
+			ar, err = t.op.GetCurrentStats(sf)
+		}
+	case opensearchv1alpha2.OperationHistogram:
+		if noHit {
+			ar.Histogram = &opensearchClient.Histogram{}
+		} else {
+			ar, err = t.op.CountLogsByInterval(sf, query.Interval)
+		}
+	default:
+		if noHit {
+			ar.Logs = &opensearchClient.Logs{}
+		} else {
+			ar, err = t.op.SearchLogs(sf, query.From, query.Size, query.Sort)
+		}
+	}
+	return &ar, err
+}
+
 
 func (t *tenantOperator) ExportLogs(user user.Info, query *loggingv1alpha2.Query, writer io.Writer) error {
 	iNamespaces, err := t.listIntersectedNamespaces(nil, nil,

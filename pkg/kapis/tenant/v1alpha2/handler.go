@@ -19,6 +19,8 @@ package v1alpha2
 import (
 	"encoding/json"
 	"fmt"
+	opensearchv1alpha2 "kubesphere.io/kubesphere/pkg/api/oslog/v1alpha2"
+	"kubesphere.io/kubesphere/pkg/simple/client/oslog"
 
 	"github.com/emicklei/go-restful"
 	corev1 "k8s.io/api/core/v1"
@@ -59,7 +61,7 @@ type tenantHandler struct {
 }
 
 func NewTenantHandler(factory informers.InformerFactory, k8sclient kubernetes.Interface, ksclient kubesphere.Interface,
-	evtsClient events.Client, loggingClient logging.Client, auditingclient auditing.Client,
+	evtsClient events.Client, loggingClient logging.Client,opensearchClient oslog.Client, auditingclient auditing.Client,
 	am am.AccessManagementInterface, im im.IdentityManagementInterface, authorizer authorizer.Authorizer,
 	monitoringclient monitoringclient.Interface, resourceGetter *resourcev1alpha3.ResourceGetter,
 	meteringOptions *meteringclient.Options, opClient openpitrix.Interface) *tenantHandler {
@@ -69,7 +71,7 @@ func NewTenantHandler(factory informers.InformerFactory, k8sclient kubernetes.In
 	}
 
 	return &tenantHandler{
-		tenant:          tenant.New(factory, k8sclient, ksclient, evtsClient, loggingClient, auditingclient, am, im, authorizer, monitoringclient, resourceGetter, opClient),
+		tenant:          tenant.New(factory, k8sclient, ksclient, evtsClient, loggingClient, opensearchClient,auditingclient, am, im, authorizer, monitoringclient, resourceGetter, opClient),
 		meteringOptions: meteringOptions,
 	}
 }
@@ -379,6 +381,41 @@ func (h *tenantHandler) QueryLogs(req *restful.Request, resp *restful.Response) 
 		}
 	} else {
 		result, err := h.tenant.QueryLogs(user, queryParam)
+		if err != nil {
+			klog.Errorln(err)
+			api.HandleInternalError(resp, req, err)
+			return
+		}
+		resp.WriteAsJson(result)
+	}
+}
+
+func (h *tenantHandler) QueryOpenSearchLogs(req *restful.Request, resp *restful.Response) {
+	user, ok := request.UserFrom(req.Request.Context())
+	if !ok {
+		err := fmt.Errorf("cannot obtain user info")
+		klog.Errorln(err)
+		api.HandleForbidden(resp, req, err)
+		return
+	}
+	queryParam, err := opensearchv1alpha2.ParseQueryParameter(req)
+	if err != nil {
+		klog.Errorln(err)
+		api.HandleInternalError(resp, req, err)
+		return
+	}
+
+	if queryParam.Operation == opensearchv1alpha2.OperationExport {
+		resp.Header().Set(restful.HEADER_ContentType, "text/plain")
+		resp.Header().Set("Content-Disposition", "attachment")
+		//err := h.tenant.ExportLogs(user, queryParam, resp)
+		//if err != nil {
+		//	klog.Errorln(err)
+		//	api.HandleInternalError(resp, req, err)
+		//	return
+		//}
+	} else {
+		result, err := h.tenant.OpensearchLogs(user, queryParam)
 		if err != nil {
 			klog.Errorln(err)
 			api.HandleInternalError(resp, req, err)

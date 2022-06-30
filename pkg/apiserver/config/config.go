@@ -18,6 +18,7 @@ package config
 
 import (
 	"fmt"
+	"kubesphere.io/kubesphere/pkg/simple/client/oslog"
 	"reflect"
 	"strings"
 	"sync"
@@ -165,6 +166,7 @@ type Config struct {
 	OpenPitrixOptions     *openpitrix.Options     `json:"openpitrix,omitempty" yaml:"openpitrix,omitempty" mapstructure:"openpitrix"`
 	MonitoringOptions     *prometheus.Options     `json:"monitoring,omitempty" yaml:"monitoring,omitempty" mapstructure:"monitoring"`
 	LoggingOptions        *logging.Options        `json:"logging,omitempty" yaml:"logging,omitempty" mapstructure:"logging"`
+	OpensearchOptions     *oslog.Options          `json:"authentication,omitempty" yaml:"authentication,omitempty" mapstructure:"authentication"`
 	AuthenticationOptions *authentication.Options `json:"authentication,omitempty" yaml:"authentication,omitempty" mapstructure:"authentication"`
 	AuthorizationOptions  *authorization.Options  `json:"authorization,omitempty" yaml:"authorization,omitempty" mapstructure:"authorization"`
 	MultiClusterOptions   *multicluster.Options   `json:"multicluster,omitempty" yaml:"multicluster,omitempty" mapstructure:"multicluster"`
@@ -196,6 +198,7 @@ func New() *Config {
 		AlertingOptions:       alerting.NewAlertingOptions(),
 		NotificationOptions:   notification.NewNotificationOptions(),
 		LoggingOptions:        logging.NewLoggingOptions(),
+		OpensearchOptions:      oslog.NewLoggingOptions(),
 		AuthenticationOptions: authentication.NewOptions(),
 		AuthorizationOptions:  authorization.NewOptions(),
 		MultiClusterOptions:   multicluster.NewOptions(),
@@ -332,6 +335,10 @@ func (conf *Config) stripEmptyOptions() {
 	}
 
 	if conf.LoggingOptions != nil && conf.LoggingOptions.Host == "" {
+		conf.LoggingOptions = nil
+	}
+
+	if conf.OpensearchOptions != nil && conf.OpensearchOptions.Host == "" {
 		conf.LoggingOptions = nil
 	}
 

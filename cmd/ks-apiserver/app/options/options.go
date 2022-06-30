@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"kubesphere.io/kubesphere/pkg/simple/client/oslog/oslog"
 
 	openpitrixv1 "kubesphere.io/kubesphere/pkg/kapis/openpitrix/v1"
 	"kubesphere.io/kubesphere/pkg/utils/clusterclient"
@@ -89,6 +90,7 @@ func (s *ServerRunOptions) Flags() (fss cliflag.NamedFlagSets) {
 	s.ServiceMeshOptions.AddFlags(fss.FlagSet("servicemesh"), s.ServiceMeshOptions)
 	s.MonitoringOptions.AddFlags(fss.FlagSet("monitoring"), s.MonitoringOptions)
 	s.LoggingOptions.AddFlags(fss.FlagSet("logging"), s.LoggingOptions)
+	s.OpensearchOptions.AddFlags(fss.FlagSet("opensearch"), s.OpensearchOptions)
 	s.MultiClusterOptions.AddFlags(fss.FlagSet("multicluster"), s.MultiClusterOptions)
 	s.EventsOptions.AddFlags(fss.FlagSet("events"), s.EventsOptions)
 	s.AuditingOptions.AddFlags(fss.FlagSet("auditing"), s.AuditingOptions)
@@ -142,6 +144,15 @@ func (s *ServerRunOptions) NewAPIServer(stopCh <-chan struct{}) (*apiserver.APIS
 		}
 		apiServer.LoggingClient = loggingClient
 	}
+
+	if s.OpensearchOptions.Host != "" {
+		osopensearchClient, err := oslog.NewClient(s.OpensearchOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to elasticsearch, please check elasticsearch status, error: %v", err)
+		}
+		apiServer.OpensearchClient = osopensearchClient
+	}
+
 
 	if s.S3Options.Endpoint != "" {
 		if s.S3Options.Endpoint == fakeInterface && s.DebugMode {
