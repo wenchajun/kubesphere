@@ -57,7 +57,7 @@ func New(address string, basicAuth bool, username, password, index string) (*Ela
 		},
 	})
 	fmt.Println("--------------------------------")
-  fmt.Println(&client.Info)
+  fmt.Println(client.Info())
 	return &Elastic{Client: client, index: index}, err
 }
 
