@@ -38,7 +38,7 @@ const (
 	ElasticV5    = "5"
 	ElasticV6    = "6"
 	ElasticV7    = "7"
-	OpenSearchV2 = "2"
+	OpenSearchV2 = "opensearchv2"
 )
 
 // Elasticsearch client
@@ -134,6 +134,13 @@ func (c *Client) loadClient() error {
 
 	var vc versions.Client
 	v := strings.Split(number, ".")[0]
+
+	distribution,_ := version["distribution"].(string)
+	if distribution == "opensearch"{
+		v ="opensearchv"+v
+	}
+	fmt.Println("------------------------------------")
+	fmt.Println( v)
 	switch v {
 	case OpenSearchV2:
 		vc, err = v2.New(c.host, c.basicAuth, c.username, c.password, c.index)

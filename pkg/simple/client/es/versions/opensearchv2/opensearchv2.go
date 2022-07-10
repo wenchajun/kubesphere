@@ -56,7 +56,7 @@ func New(address string, basicAuth bool, username, password, index string) (*Ope
 			},
 		},
 	})
-
+   fmt.Println(client.Info())
 	return &OpenSearch{client: client, index: index}, err
 }
 
